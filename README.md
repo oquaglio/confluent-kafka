@@ -1,6 +1,7 @@
 # confluent-kafka
 Local container-based environment for Confluent Kafka
 
+https://developer.confluent.io/confluent-tutorials/kafka-on-docker/
 
 
 ## Start the Kafka Container
