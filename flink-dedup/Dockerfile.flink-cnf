@@ -1,0 +1,5 @@
+# Base image with Flink SQL client and Kafka support
+FROM cnfldemos/flink-kafka:1.19.1-scala_2.12-java17
+
+# Copy required connector JARs into Flink lib path
+COPY jars/*.jar /opt/flink/lib/
