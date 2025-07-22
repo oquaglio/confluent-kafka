@@ -2,6 +2,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: kafka-broker
+    hostname: kafka-broker
     ports:
       - "9092:9092"
     environment:
@@ -24,8 +25,10 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/jaas.conf"
     volumes:
       - ./kafka-data:/tmp/kraft-combined-logs
+      - ./jaas.conf:/etc/kafka/jaas.conf
     command: bash -c '/etc/confluent/docker/configure && kafka-storage format --config /etc/kafka/kafka.properties --cluster-id $$CLUSTER_ID --add-scram "SCRAM-SHA-512=[name=admin,password=admin-secret]" --ignore-formatted && /etc/confluent/docker/run'
     networks:
       - kafka-network
