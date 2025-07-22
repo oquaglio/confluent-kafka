@@ -2,10 +2,24 @@
 
 Confluent Kafka Broker example.
 
+
 ## Docs
+
 https://developer.confluent.io/confluent-tutorials/kafka-on-docker/
 
+
+## Create Local Bind Mount Dir
+
+In PWD:
+```SH
+mkdir kafka-data
+```
+```SH
+sudo chown -R 1000:1000 kafka-data
+```
+
 ## Start the Kafka Container
+
 ```SH
 docker-compose up -d
 ```

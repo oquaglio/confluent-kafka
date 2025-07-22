@@ -24,7 +24,8 @@ services:
       # Generate a unique cluster ID (run `kafka-storage.sh random-uuid` in container if needed)
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk  # Static example; replace with your own
     volumes:
-      - kafka-data:/tmp/kraft-combined-logs  # Persist data between restarts
+      #- kafka-data:/tmp/kraft-combined-logs  # Persist data between restarts
+      - ./kafka-data:/tmp/kraft-combined-logs  # Bind mount for persistence
 
-volumes:
-  kafka-data:
+# volumes:
+#   kafka-data:
