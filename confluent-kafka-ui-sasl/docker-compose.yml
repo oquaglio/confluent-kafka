@@ -23,12 +23,16 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/jaas.conf"
     volumes:
-      - ./kafka-data:/tmp/kraft-combined-logs
-      - ./jaas.conf:/etc/kafka/jaas.conf
+      # Named volume: Docker manages ownership, so the non-root appuser (uid 1000) can write.
+      - kafka-data:/var/lib/kafka/data
+    configs:
+      # Injected from inline content (no bind mount), so it works when Docker runs in another WSL2 distro.
+      - source: jaas
+        target: /etc/kafka/jaas.conf
     command: bash -c '/etc/confluent/docker/configure && kafka-storage format --config /etc/kafka/kafka.properties --cluster-id $$CLUSTER_ID --add-scram "SCRAM-SHA-512=[name=admin,password=admin-secret]" --ignore-formatted && /etc/confluent/docker/run'
     networks:
       - kafka-network
@@ -53,3 +57,15 @@ services:
 networks:
   kafka-network:
     driver: bridge
+
+volumes:
+  kafka-data:
+
+configs:
+  jaas:
+    content: |
+      KafkaServer {
+        org.apache.kafka.common.security.scram.ScramLoginModule required
+        username="admin"
+        password="admin-secret";
+      };
