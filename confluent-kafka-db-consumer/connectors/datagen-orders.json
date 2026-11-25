@@ -1,0 +1,8 @@
+{
+  "connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+  "kafka.topic": "orders",
+  "quickstart": "orders",
+  "max.interval": "1000",
+  "iterations": "-1",
+  "tasks.max": "1"
+}
