@@ -24,7 +24,8 @@ for f in "$SCHEMAS_DIR"/*.avsc; do
     --data "$body" "$SR_URL/subjects/$subject/versions")"
   code="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
   if [ "$code" != 200 ]; then
-    echo "!! $subject: HTTP $code $resp" >&2
+    # Keep the reason, drop the copy of the old schema the registry appends.
+    echo "!! $subject: HTTP $code $(echo "$resp" | jq -r '.message | sub(", \\{oldSchema: .*"; "")' 2>/dev/null || echo "$resp")" >&2
     exit 1
   fi
   version="$(curl -sf "$SR_URL/subjects/$subject/versions/latest" | jq -r .version)"

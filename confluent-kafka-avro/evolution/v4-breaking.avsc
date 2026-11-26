@@ -1,0 +1,25 @@
+{
+  "type": "record",
+  "name": "Transaction",
+  "namespace": "com.example.payments",
+  "doc": "A card payment",
+  "fields": [
+    { "name": "transaction_id", "doc": "Business key, also used as the Kafka record key",
+      "type": { "type": "string", "arg.properties": { "regex": "TX-[0-9]{6}" } } },
+    { "name": "account_id",
+      "type": { "type": "string", "arg.properties": { "options": ["ACC-1001", "ACC-1002", "ACC-1003", "ACC-1004", "ACC-1005"] } } },
+    { "name": "amount", "doc": "Amount in major units of `currency`",
+      "type": { "type": "string", "arg.properties": { "regex": "[0-9]{1,4}\\.[0-9]{2}" } } },
+    { "name": "currency",
+      "type": { "type": "string", "arg.properties": { "options": ["AUD", "USD", "EUR", "GBP"] } } },
+    { "name": "status",
+      "type": { "type": "enum", "name": "TransactionStatus", "symbols": ["PENDING", "COMPLETED", "FAILED"] } },
+    { "name": "created_at",
+      "type": { "type": "long", "logicalType": "timestamp-millis",
+                "arg.properties": { "range": { "min": 1767225600000, "max": 1798761599000 } } } },
+    { "name": "channel", "doc": "v2: where the payment was made", "default": "web",
+      "type": { "type": "string", "arg.properties": { "options": ["web", "mobile", "pos"] } } },
+    { "name": "fee", "doc": "v3: processing fee in major units of `currency`", "default": 0.0,
+      "type": { "type": "double", "arg.properties": { "range": { "min": 0, "max": 25 } } } }
+  ]
+}
