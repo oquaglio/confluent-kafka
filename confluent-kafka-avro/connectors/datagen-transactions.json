@@ -1,0 +1,16 @@
+{
+  "connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+  "kafka.topic": "transactions",
+  "schema.string": "@file:/etc/schemas/transactions-value.avsc",
+  "schema.keyfield": "transaction_id",
+  "max.interval": "1000",
+  "iterations": "-1",
+  "tasks.max": "1",
+
+  "value.converter": "io.confluent.connect.avro.AvroConverter",
+  "value.converter.schema.registry.url": "http://schema-registry:8081",
+  "value.converter.auto.register.schemas": "false",
+  "value.converter.use.latest.version": "true",
+  "value.converter.enhanced.avro.schema.support": "true",
+  "value.converter.connect.meta.data": "false"
+}
