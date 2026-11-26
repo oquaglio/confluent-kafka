@@ -46,6 +46,11 @@ docker compose down               # add -v to wipe data
 The first `up` builds the Connect image (downloads the plugins from Confluent Hub), so it needs internet
 and takes a minute. Later starts reuse the image.
 
+Rebuilds:
+
+- docker compose up -d builds the image only if it doesn't exist yet.
+- After you edit connect/Dockerfile, connectors/*.json or the register script, use docker compose up -d --build (or docker compose build connect). scripts/up.sh always passes --build, and Docker's layer cache keeps that quick when nothing changed.
+
 ## Files
 
 ```text
@@ -146,6 +151,117 @@ How it's set up (see `pgadmin` and `configs:` in `docker-compose.yml`):
 - pgAdmin keeps its settings in the `pgadmin-data` volume. `servers.json` is only imported the first
   time, so after editing it run `docker compose down -v` (or `docker volume rm
   confluent-kafka-db-consumer_pgadmin-data`).
+
+## Disk usage: Postgres table vs Kafka topic
+
+Each service stores its data in a named volume:
+
+| Volume | Mounted at | Holds |
+|---|---|---|
+| `confluent-kafka-db-consumer_kafka-data` | `/var/lib/kafka/data` in `kafka-broker` | Every topic partition, one folder each (`orders-0`, `__consumer_offsets-12`, ...) |
+| `confluent-kafka-db-consumer_postgres-data` | `/var/lib/postgresql/data` in `postgres` | The whole Postgres cluster: tables, indexes, WAL |
+| `confluent-kafka-db-consumer_pgadmin-data` | `/var/lib/pgadmin` in `pgadmin` | pgAdmin settings only |
+
+### Whole volumes (Docker)
+
+```sh
+docker system df -v | grep -E 'VOLUME NAME|db-consumer'
+```
+
+> **This overstates the Kafka volume.** It reports *apparent* size. Kafka creates a 10 MB `.index` and
+> a 10 MB `.timeindex` file for every partition, but these are *sparse*: they use almost no real disk
+> until they fill. With about 85 partitions (mostly the 50 internal `__consumer_offsets` ones), that adds
+> up to about 1.7 GB on paper while only about 31 MB is really used. Use `du` for the real number:
+
+```sh
+# Real usage of a volume, from a throwaway container (works even if the service is stopped)
+docker run --rm -v confluent-kafka-db-consumer_kafka-data:/v:ro alpine du -sh /v
+docker run --rm -v confluent-kafka-db-consumer_postgres-data:/v:ro alpine du -sh /v
+
+# Or inside the running container
+docker exec kafka-broker du -sh /var/lib/kafka/data
+docker exec postgres     du -sh /var/lib/postgresql/data
+```
+
+### Kafka topic `orders`
+
+A topic's data is the folder for each of its partitions. `orders` has one partition, `orders-0`.
+
+```sh
+# Real size per partition folder, biggest last
+docker exec kafka-broker bash -c 'du -sh /var/lib/kafka/data/*/ | sort -h | tail'
+
+# Files inside: the .log segment holds the messages; .index/.timeindex are the sparse indexes
+docker exec kafka-broker bash -c 'ls -lh /var/lib/kafka/data/orders-0; du -sh /var/lib/kafka/data/orders-0/*'
+
+# Kafka's own view (bytes of log data per partition, via the broker API; no shell access needed)
+docker exec kafka-broker kafka-log-dirs --bootstrap-server kafka:29092 --describe --topic-list orders
+
+# Number of messages, to work out bytes per message
+docker exec kafka-broker kafka-get-offsets --bootstrap-server kafka:29092 --topic orders
+```
+
+What controls the size: `retention.ms` (default 7 days) and `retention.bytes` (default unlimited).
+Kafka only deletes whole, closed **segments**. A segment is closed at 1 GB (`segment.bytes`) or after 7
+days (`segment.ms`), whichever comes first. So a slow topic like this one keeps up to about 14 days of
+data before the oldest segment goes. Check the settings with:
+
+```sh
+docker exec kafka-broker kafka-configs --bootstrap-server kafka:29092 --entity-type topics \
+  --entity-name orders --describe --all | grep -E ' (retention\.(ms|bytes)|segment\.(bytes|ms))='
+```
+
+### Postgres table `orders`
+
+```sh
+docker exec postgres psql -U demo -d demo -c "
+  SELECT count(*)                                         AS rows,
+         pg_size_pretty(pg_relation_size('orders'))       AS table_data,
+         pg_size_pretty(pg_indexes_size('orders'))        AS indexes,
+         pg_size_pretty(pg_total_relation_size('orders')) AS total_incl_indexes,
+         pg_size_pretty(pg_database_size('demo'))         AS whole_db
+  FROM orders"
+
+# Where the table lives on disk, and its files (main data, free-space map _fsm, visibility map _vm)
+docker exec postgres bash -c 'cd /var/lib/postgresql/data &&
+  f=$(psql -U demo -d demo -tAc "SELECT pg_relation_filepath('\''orders'\'')") && ls -lh $f*'
+
+# How the volume splits: table/index files (base) vs write-ahead log (pg_wal)
+docker exec postgres bash -c 'cd /var/lib/postgresql/data && du -sh base pg_wal'
+```
+
+The same queries also work in pgAdmin's **Query Tool**. pgAdmin also shows table size under **orders →
+Properties / Statistics**.
+
+### With Portainer
+
+Portainer's **Volumes** page lists each volume with its driver, mount point and the containers using
+it. It doesn't show sizes, so use a container console to measure:
+
+1. **Containers** → `kafka-broker` (or `postgres`) → **>_ Console**.
+2. Command `/bin/bash`, then **Connect**. Leave the user as is: `appuser` for Kafka, `root` for
+   Postgres.
+3. Run the same commands as above without the `docker exec <container>` prefix, for example:
+   - Kafka: `du -sh /var/lib/kafka/data/orders-0` or
+     `kafka-log-dirs --bootstrap-server kafka:29092 --describe --topic-list orders`
+   - Postgres: `psql -U demo -d demo -c "SELECT pg_size_pretty(pg_total_relation_size('orders'))"`
+
+To measure a stopped service's volume: **Containers → Add container**, image `alpine`, command
+`du -sh /v`, add a volume mapping of `/v` to `confluent-kafka-db-consumer_kafka-data` (read-only), deploy.
+Then read the result in the container's **Logs**.
+
+### Example numbers (about 124k orders after about 17 h)
+
+| Where | Size | Per row/message |
+|---|---|---|
+| Kafka `orders-0`, real (`du`) | 21 MB (log 20.5 MB + small indexes) | ~170 B |
+| Kafka volume, real / apparent | 31 MB / 1.7 GB | |
+| Postgres `orders` table + PK index | 10 MB + 2.7 MB = 13 MB | ~105 B |
+| Postgres volume (`base` 43 MB + `pg_wal` 33 MB) | 76 MB | |
+
+The Kafka copy is bigger per record because every message also stores its key, timestamp and batch
+headers. The Postgres volume is much bigger than the table because it also holds the write-ahead log
+and the system catalogs.
 
 ## Use another database
 
