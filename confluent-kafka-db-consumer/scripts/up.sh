@@ -11,3 +11,6 @@ docker logs kafka-connect-init
 echo "Waiting for the first rows in Postgres..."
 until docker exec postgres psql -U demo -d demo -tAc 'SELECT 1 FROM orders LIMIT 1' 2>/dev/null | grep -q 1; do sleep 2; done
 scripts/query.sh
+
+echo
+echo "Kafka UI: http://localhost:8082   pgAdmin: http://localhost:5050   Connect REST: http://localhost:8083"

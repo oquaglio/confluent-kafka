@@ -20,6 +20,7 @@ A Confluent Kafka stack that loads topic data into a database with **Kafka Conne
 | `connect-init` | `kafka-connect-init` | One-shot: registers the connectors in `connectors/`, then exits |
 | `postgres` | `postgres` | `localhost:5432`, database `demo`, user/password `demo`/`demo` |
 | `kafka-ui` | `kafka-ui` | http://localhost:8082 (topics, schemas, connectors) |
+| `pgadmin` | `pgadmin` | Postgres web UI, http://localhost:5050 (no login) |
 
 ## Start / Stop
 
@@ -125,6 +126,27 @@ docker exec kafka-broker kafka-consumer-groups --bootstrap-server kafka:29092 \
   --describe --group connect-postgres-sink
 ```
 
+## Browse the data in pgAdmin
+
+Open http://localhost:5050. There is no login page and the `demo` server is already registered with its
+password, so no prompt either. Go to **Servers → demo → Databases → demo → Schemas → public → Tables →
+orders**, then right-click → **View/Edit Data → All Rows**, or open **Tools → Query Tool** and run:
+
+```sql
+SELECT * FROM orders ORDER BY orderid DESC LIMIT 20;
+```
+
+How it's set up (see `pgadmin` and `configs:` in `docker-compose.yml`):
+
+- `PGADMIN_CONFIG_SERVER_MODE=False` runs pgAdmin in desktop mode: one built-in user, no login.
+  That's fine on your own machine, but don't expose it.
+- `servers.json` (inline `configs`, no bind mount) registers the `demo` server on first start.
+- A `pgpass` file supplies the password. It must be owned by pgAdmin's user (uid 5050) and be mode
+  `0600`, or libpq ignores it and pgAdmin asks for the password.
+- pgAdmin keeps its settings in the `pgadmin-data` volume. `servers.json` is only imported the first
+  time, so after editing it run `docker compose down -v` (or `docker volume rm
+  confluent-kafka-db-consumer_pgadmin-data`).
+
 ## Use another database
 
 The JDBC plugin also bundles drivers for SQL Server, Oracle and SQLite. For MySQL, add
@@ -135,7 +157,7 @@ service and change `connection.url`, `connection.user` and `connection.password`
 ## Notes
 
 - Image versions are pinned to Confluent Platform **8.1.0**, the same as `confluent-kafka-cluster`.
-- Host ports `9092`, `8081`, `8082`, `8083` and `5432` clash with the other projects in this repo and with
+- Host ports `9092`, `8081`, `8082`, `8083`, `5432` and `5050` clash with the other projects in this repo and with
   any local Postgres. Stop the other stack first.
 - Datagen `orderid` starts at 0 and counts up. Its position is stored in Connect's offsets topic, so a
   restart continues where it left off. After `down -v` it starts again from 0.
