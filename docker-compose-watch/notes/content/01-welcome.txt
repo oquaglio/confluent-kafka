@@ -1,0 +1,2 @@
+Every .txt file in notes/content is synced into the container, then
+`build-notes` runs inside it and regenerates this page.

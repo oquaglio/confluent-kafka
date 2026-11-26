@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>compose watch demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>docker compose watch demo</h1>
+  <p id="message">Hello from the site service (action: sync).</p>
+  <p>Stack info seeded by the init job: <a href="meta/stack-info.json">meta/stack-info.json</a></p>
+  <ul>
+    <li><a href="/api/">/api/</a>: Python service (action: rebuild + sync+restart)</li>
+    <li><a href="/notes/">/notes/</a>: generated page (action: sync+exec)</li>
+  </ul>
+</body>
+</html>

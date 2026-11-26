@@ -1,0 +1,2 @@
+The rule has `include: ["*.txt"]`, so editing any other file type here
+(e.g. scratch.md) triggers nothing.
