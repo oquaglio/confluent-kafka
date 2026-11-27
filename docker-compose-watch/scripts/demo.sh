@@ -33,7 +33,7 @@ cleanup() {
   for f in "${EDITED[@]}"; do cp -f "$WORK/$f" "$f"; done
   rm -f "${CREATED[@]}"
   docker compose up -d --build --force-recreate --wait --quiet-pull >/dev/null 2>&1 \
-    && ok "stack back to its original state" || echo "   run 'make start' to recover"
+    && ok "stack back to its original state" || echo "   run 'just start' to recover"
   echo "   watch log kept at $WATCH_LOG"
 }
 

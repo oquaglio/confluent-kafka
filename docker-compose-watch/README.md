@@ -1,28 +1,31 @@
 # docker compose watch
 
 A small, vanilla Compose project for learning `docker compose watch`. Each watch feature has a
-service where editing one file has a visible, checkable effect. `make demo` runs the whole tour on
+service where editing one file has a visible, checkable effect. `just demo` runs the whole tour on
 its own: it edits each watched file, checks the result over HTTP, then restores everything.
 
 Built and tested with **Docker Compose v5.5.1** (Engine 29.8.1).
 
 ## Quick start
 
+Needs Docker Compose with the watch features listed below (tested on v5.5.1) and [just](https://github.com/casey/just).
+Every recipe is a one-line `docker compose` command, so you can also run the commands directly.
+
 ```sh
-make up        # = docker compose up --build --watch   (foreground, Ctrl-C stops everything)
+just up        # = docker compose up --build --watch   (foreground, Ctrl-C stops everything)
 ```
 
 Open http://localhost:8090 and edit files under `site/`, `notes/`, `api/` or `gateway/`. To use a
-different port, set `GATEWAY_PORT=9000 make up`.
+different port, set `GATEWAY_PORT=9000 just up`.
 
 ```sh
-make demo      # hands-free tour of every action, with verification (needs nothing else running)
-make status    # containers + one line per endpoint
-make down      # remove containers, keep images/volume
-make clean     # remove containers, the project's images and the named volume
+just demo      # hands-free tour of every action, with verification (needs nothing else running)
+just status    # containers + one line per endpoint
+just down      # remove containers, keep images/volume
+just clean     # remove containers, the project's images and the named volume
 ```
 
-`make help` lists every target. Only `gateway` publishes a port (8090); the other services are
+`just` lists every recipe. Only `gateway` publishes a port (8090); the other services are
 reachable only through it.
 
 ## What compose watch is
@@ -141,7 +144,7 @@ flowchart LR
 `api` and `notes` to become healthy, starts `gateway`, then starts watching. You don't need to do
 anything by hand. `seed` is idempotent: it keeps `first_seeded` and increments `seed_runs`.
 
-## The guided demo (`make demo`)
+## The guided demo (`just demo`)
 
 `scripts/demo.sh`:
 
@@ -168,7 +171,7 @@ would both react to the same edits.
 
 ## Things to try by hand
 
-With `make up` (or `make start` + `make watch`) running in another terminal:
+With `just up` (or `just start` + `just watch`) running in another terminal:
 
 ```sh
 # sync: instant, no restart
@@ -189,16 +192,16 @@ uv add --project api --no-sync pyfiglet==1.0.2 && sleep 30 && curl -s localhost:
 ```
 
 Revert your edits with `git checkout -- . && git clean -fd site/html notes/content`, then
-`make start` (or `docker compose up -d --force-recreate`) so the containers match the files again.
+`just start` (or `docker compose up -d --force-recreate`) so the containers match the files again.
 
 ## `docker compose watch` vs `docker compose up --watch`
 
-| | `docker compose up --watch` (`make up`) | `docker compose watch` (`make watch` uses `--no-up`) |
+| | `docker compose up --watch` (`just up`) | `docker compose watch` (`just watch` uses `--no-up`) |
 |---|---|---|
 | Starts services | Yes | Yes (build + up), unless `--no-up` |
 | Output | Interleaved service logs **and** watch events | Watch events and build output only |
 | Ctrl-C | Stops watching **and** stops the containers | Stops watching; **containers keep running** |
-| Use when | One terminal, normal dev loop | Logs in another terminal/UI, or a stack started separately (`make start`), or scripts (the demo runs it in the background) |
+| Use when | One terminal, normal dev loop | Logs in another terminal/UI, or a stack started separately (`just start`), or scripts (the demo runs it in the background) |
 
 `docker compose watch` accepts service names to watch only some services, e.g.
 `docker compose watch api`.
@@ -236,7 +239,7 @@ Revert your edits with `git checkout -- . && git clean -fd site/html notes/conte
   the narrowest directory that matters, never at the whole repo, and ignore `node_modules/`, `.venv/`,
   `.git/` and build outputs. A full rebuild is far slower than a sync, so use `rebuild` only for the
   files that really need it (dependency manifests and lockfiles).
-- **The rebuild demo doesn't re-lock.** `make demo` edits `pyproject.toml` with `sed`, so the API
+- **The rebuild demo doesn't re-lock.** `just demo` edits `pyproject.toml` with `sed`, so the API
   Dockerfile runs `uv sync` without `--locked` and resolves again. In a real project you'd run
   `uv add` on the host (updating `uv.lock`) and build with `--locked`.
 - **No secrets** are used, so there's no `.env`. `GATEWAY_PORT` is the only variable.
@@ -245,7 +248,7 @@ Revert your edits with `git checkout -- . && git clean -fd site/html notes/conte
 
 ```text
 docker-compose.yml        services, healthchecks, ordering, all watch rules
-Makefile                  up / start / watch / demo / status / logs / down / clean
+justfile                  up / start / watch / demo / status / logs / down / clean
 scripts/demo.sh           hands-free, self-verifying tour
 init/                     seed one-shot (busybox)
 site/html/                sync target (drafts/ ignored)
