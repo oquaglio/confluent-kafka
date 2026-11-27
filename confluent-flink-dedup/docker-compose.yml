@@ -155,6 +155,27 @@ services:
       KAFKA_REST_LISTENERS: "http://0.0.0.0:8082"
       KAFKA_REST_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
 
+  # Web console for topics, messages, consumer groups, Schema Registry, Connect and ksqlDB.
+  # kafbat/kafka-ui is the maintained fork of provectuslabs/kafka-ui. Port 8080 because REST Proxy has 8082.
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.5.1
+    hostname: kafka-ui
+    container_name: kafka-ui
+    depends_on:
+      - broker
+      - schema-registry
+      - connect
+      - ksqldb-server
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: broker:29092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://connect:8083
+      KAFKA_CLUSTERS_0_KSQLDBSERVER: http://ksqldb-server:8088
+
   # One-shot: creates sensor-data once the broker answers. The Flink Kafka source fails if the topic is missing.
   kafka-init:
     image: confluentinc/cp-server:8.4.1

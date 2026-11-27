@@ -43,10 +43,11 @@ works when the Docker daemon runs in another WSL2 distro. **After editing `flink
 | Postgres JDBC driver | 42.7.15 | |
 | Postgres | 19 | |
 | Python / uv / kafka-python | 3.15 / 0.13.10 / 3.0.13 | Producer image |
+| Kafka UI (`ghcr.io/kafbat/kafka-ui`) | v1.5.1 | Maintained fork of `provectuslabs/kafka-ui`, which the other projects in this repo use (last release v0.7.2, 2024) |
 
 Control Center (legacy) is only published up to 7.9.x and doesn't support CP 8. Its replacement,
 Control Center next-gen, needs Prometheus and Alertmanager as well, so this project has no Control
-Center. Use the Flink UI and the `just` recipes instead.
+Center. [Kafka UI](#web-consoles) is the Kafka console instead.
 
 Connector versions have to match the Flink minor (the `-2.2` suffix). To bump Flink, check that
 both connectors have a build for the new minor first, then update the URLs and checksums in
@@ -60,6 +61,7 @@ both connectors have a build for the new minor first, then update the URLs and c
 | `rest-proxy` | `rest-proxy` | http://localhost:8082 |
 | `connect` | `connect` | http://localhost:8083 |
 | `ksqldb-server` | `ksqldb-server` | http://localhost:8088 |
+| `kafka-ui` | `kafka-ui` | Kafka web console http://localhost:8080 (not 8082, which REST Proxy uses here) |
 | `flink-taskmanager` | `flink-taskmanager` | 10 task slots |
 | `flink-sql-client` | `flink-sql-client` | Idle (`sleep infinity`), `just sql` execs into it. SQL files are at `/opt/flink-sql` |
 | `kafka-init` | `kafka-init` | One-shot: creates topic `sensor-data`, then exits |
@@ -71,8 +73,8 @@ both connectors have a build for the new minor first, then update the URLs and c
 Schema Registry, REST Proxy, Connect and ksqlDB come with cp-all-in-one. The pipeline doesn't use
 them, but they're there to explore. See [Endpoints](#endpoints).
 
-The host ports overlap with the other Kafka projects in this repo (9092, 8081–8083), so run only one
-of them at a time.
+The host ports overlap with the other Kafka projects in this repo (9092, 8081–8083, 8080), so run only
+one of them at a time.
 
 ## Endpoints
 
@@ -80,14 +82,21 @@ of them at a time.
 
 | Console | Link | What it's for |
 |---|---|---|
+| Kafka UI | http://localhost:8080 | Kafka console for the `local` cluster |
+| Kafka UI: topics | http://localhost:8080/ui/clusters/local/all-topics | `sensor-data` plus the internal Connect/ksqlDB topics. Open `sensor-data` → *Messages* to browse the JSON readings live |
+| Kafka UI: consumer groups | http://localhost:8080/ui/clusters/local/consumer-groups | Consumers and their lag. The Flink Kafka source commits offsets only on checkpoints, and no checkpointing is configured, so Flink may not show up here |
+| Kafka UI: Schema Registry | http://localhost:8080/ui/clusters/local/schemas | Subjects (empty, the pipeline uses JSON) |
+| Kafka UI: Kafka Connect | http://localhost:8080/ui/clusters/local/connectors | Connectors on the `connect` worker (none deployed). Create one from here |
+| Kafka UI: ksqlDB | http://localhost:8080/ui/clusters/local/ksqldb | Run ksqlDB queries against `ksqldb-server` |
+| Kafka UI: brokers | http://localhost:8080/ui/clusters/local/brokers | Broker config, partitions and disk usage |
 | Flink Web UI: overview | http://localhost:9081/#/overview | Running and finished jobs, slots, TaskManagers. The `sensor-dedup` job shows up here |
 | Flink: running jobs | http://localhost:9081/#/job/running | Click the job to see its graph (Source → Deduplicate → Sink), records in/out per operator, backpressure, exceptions |
 | Flink: JobManager config | http://localhost:9081/#/job-manager/config | The effective config, including the `FLINK_PROPERTIES` from compose |
 | Flink: JobManager logs | http://localhost:9081/#/job-manager/logs | Startup and job-submission errors |
 | Flink: TaskManagers | http://localhost:9081/#/task-manager | Registered TaskManagers, slots, memory, and per-TM logs and stdout |
 
-There's no Kafka web console. Control Center was dropped with the move to CP 8 (see
-[Versions](#versions)). Use `just consume`, the REST Proxy below, or the Flink UI.
+Control Center was dropped with the move to CP 8 (see [Versions](#versions)), and Kafka UI takes its
+place. It has no login: like everything else here, it's for local use only.
 
 ### HTTP APIs
 
@@ -95,6 +104,8 @@ All of these answer plain `GET`s, so you can open them in a browser or use `curl
 
 | Service | Link | What it returns |
 |---|---|---|
+| Kafka UI | http://localhost:8080/actuator/health | `{"status":"UP"}` once the UI is running |
+| | http://localhost:8080/api/clusters | Cluster status (`ONLINE`) and enabled integrations (Schema Registry, Connect, ksqlDB) |
 | Flink REST | http://localhost:9081/overview | Cluster summary: TaskManagers, slots, jobs by state. The JobManager healthcheck reads this |
 | | http://localhost:9081/jobs/overview | Every job with its name and state. `submit-job.sh` polls this for `sensor-dedup` / `RUNNING` |
 | | http://localhost:9081/taskmanagers | TaskManager details |
