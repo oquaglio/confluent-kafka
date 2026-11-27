@@ -14,7 +14,7 @@ README with concepts, start/stop commands and things to try.
 | [confluent-kafka-db-consumer](confluent-kafka-db-consumer/) | Topic → database without code: a Datagen source connector feeds a JDBC sink into Postgres | Connect, Schema Registry, Postgres, pgAdmin (:5050) |
 | [confluent-kafka-with-debezium](confluent-kafka-with-debezium/) | CDC: Postgres row changes captured by Debezium and applied to a second Postgres | Debezium source + JDBC sink, Schema Registry |
 | [confluent-kafka-avro](confluent-kafka-avro/) | Schema-first Avro: your `.avsc` is registered before anything produces, plus a schema evolution demo (compatible v2/v3, breaking v4 refused) | Schema Registry, Datagen, JDBC sink, Postgres |
-| [confluent-flink-dedup](confluent-flink-dedup/) | Flink SQL PoC: deduplicates sensor readings from Kafka into Postgres, with duplicates in a separate table | cp-all-in-one 7.9, Flink 1.19, Python producer |
+| [confluent-flink-dedup](confluent-flink-dedup/) | Flink SQL PoC: deduplicates sensor readings from Kafka into Postgres, fully automated (`just up`) | cp-all-in-one 8.4, Flink 2.2, Postgres 19, Python producer |
 
 The table runs roughly from basic to more involved. The Kafka projects publish overlapping host
 ports (9092, 8081–8083, 5432), so run only one at a time. `docker-compose-watch` only uses 8090.
