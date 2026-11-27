@@ -1,23 +1,57 @@
 # Basic Kafka Broker
 
 A single-node Confluent Kafka broker (`confluentinc/cp-kafka`) running in **KRaft mode** (no ZooKeeper),
-started with Docker Compose. Use it to learn the core Kafka concepts with the built-in CLI tools.
+started with Docker Compose, plus [Kafka UI](https://github.com/kafbat/kafka-ui) as a web console. Use it
+to learn the core Kafka concepts with the built-in CLI tools, and watch the results in the UI.
 
 ## Docs
 
 - https://developer.confluent.io/confluent-tutorials/kafka-on-docker/
 - https://kafka.apache.org/documentation/
+- https://ui.docs.kafbat.io/
+
+## Endpoints
+
+| Endpoint | URL / address | What |
+|---|---|---|
+| Kafka UI | http://localhost:8080 | Web console: topics, messages, consumer groups, brokers |
+| Kafka UI health | http://localhost:8080/actuator/health | Returns `{"status":"UP"}` when the UI is running |
+| Kafka UI REST API | http://localhost:8080/api/clusters | The API the UI itself uses (e.g. `/api/clusters/local/topics`) |
+| Kafka broker (host) | `localhost:9092` | Kafka protocol, not HTTP. For clients on your machine |
+| Kafka broker (compose network) | `kafka:29092` | Kafka protocol, for other containers in this project |
+
+Kafka UI has **no login** and can create/delete topics and produce messages, so it's published
+on `127.0.0.1` only. The broker port has no authentication either; both are for local use.
 
 ## Start / Stop
 
 ```sh
 docker compose up -d            # start
+docker compose ps               # both containers; kafka-broker should be (healthy)
 docker logs -f kafka-broker     # follow logs (Ctrl+C to stop following)
 docker compose down             # stop (data is kept in the volume)
 docker compose down -v          # stop AND delete all Kafka data
 ```
 
-The broker is ready once the logs stop scrolling and don't show any `ERROR`/`Exception`.
+The broker has a healthcheck (`kafka-broker-api-versions`), and Kafka UI only starts once it's
+healthy. Then open http://localhost:8080.
+
+## Kafka UI
+
+[kafbat/kafka-ui](https://github.com/kafbat/kafka-ui) (`v1.5.1`) is the maintained fork of
+`provectuslabs/kafka-ui`. It's configured with one cluster, `local`, at `kafka:29092`.
+
+Things to look at while you work through the cheat sheet below:
+
+- **Topics**: partitions, replication factor, configs (e.g. `retention.ms` after you change it).
+  *Messages* tab shows key, partition, offset and timestamp per record, and you can produce
+  from the UI too.
+- **Consumers**: each group's members, which partitions each member owns, committed offsets
+  and lag. Start a second consumer in a group and watch the partitions get reassigned.
+- **Brokers**: the single broker, its configs and log dirs.
+
+The UI refreshes cluster statistics every 30 seconds or so, so a new topic may take a moment
+to appear in the list.
 
 ## Concepts This Project Covers
 
@@ -252,6 +286,11 @@ touch ./probe && docker run --rm -v "$PWD":/x alpine ls -la /x/probe; rm -f ./pr
 ### Broker won't start after changing `CLUSTER_ID`
 
 The volume was formatted with the old ID. Run `docker compose down -v`, then `docker compose up -d`.
+
+### Kafka UI shows the cluster as offline
+
+Kafka UI connects to `kafka:29092` (the in-network listener), not `localhost:9092`. Check
+`docker compose ps` shows the broker as `(healthy)`, then `docker logs kafka-ui`.
 
 ### `kafka-topics.sh: command not found`
 

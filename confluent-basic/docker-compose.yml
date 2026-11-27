@@ -1,6 +1,7 @@
 services:
   kafka:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:8.4.1
+    hostname: kafka
     container_name: kafka-broker
     ports:
       - "9092:9092"  # External access for clients
@@ -20,11 +21,33 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      # Generate a unique cluster ID (run `kafka-storage.sh random-uuid` in container if needed)
+      # Generate a unique cluster ID (run `kafka-storage random-uuid` in container if needed)
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk  # Static example; replace with your own
     volumes:
       # Named volume: Docker manages ownership, so the non-root appuser (uid 1000) can write.
       - kafka-data:/var/lib/kafka/data
+    # Healthy once the broker answers API requests; Kafka UI waits for this
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  # Web console for topics, messages and consumer groups.
+  # kafbat/kafka-ui is the maintained fork of provectuslabs/kafka-ui. No login: published on localhost only.
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.5.1
+    hostname: kafka-ui
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: kafka:29092
 
 volumes:
   kafka-data:
