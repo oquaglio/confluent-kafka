@@ -5,22 +5,43 @@ deduplicates them on `(device_id, tag, timestamp)` and upserts the result into t
 `sensor_readings`.
 
 ```text
-data_generator.py ──▶ topic sensor-data ──▶ Flink SQL job ──────────────────▶ Postgres flink_demo
-(kafka-python,        (JSON, auto-created)   sensor_source (Kafka, JSON)        .sensor_readings
- localhost:9092)                              ROW_NUMBER() dedup                 PK (device_id, tag, timestamp)
-                                              sensor_sink (JDBC, upsert)
+producer ──▶ topic sensor-data ──▶ Flink SQL job "sensor-dedup" ─────────▶ Postgres flink_demo
+(container,  (JSON, 1 partition)    sensor_source (Kafka, JSON)             .sensor_readings
+ kafka-python)                      ROW_NUMBER() dedup                      PK (device_id, tag, timestamp)
+                                    sensor_sink (JDBC, upsert)
 ```
+
+`just up` starts everything, including the Flink job. No manual setup is needed:
+
+- **Connector jars:** `flink/Dockerfile` downloads the JDBC connector and Postgres driver from Maven
+  Central at build time and checks them against pinned SHA-256s.
+- **Postgres tables:** `postgres/Dockerfile` bakes `init.sql` into the image, and it runs on first
+  start.
+- **Kafka topic:** the one-shot `kafka-init` container creates `sensor-data` once the broker
+  answers. The Flink Kafka source fails at startup with `UnknownTopicOrPartitionException` if the
+  topic doesn't exist, so the topic has to come first.
+- **Flink job:** the one-shot `flink-job-submit` container waits for the JobManager to be healthy (a
+  TaskManager has registered), for Postgres, and for `kafka-init`. It then submits the job, and checks through the REST
+  API that the job is RUNNING. If the job is already running, it does nothing.
+- **Producer:** a container that `just produce` runs, so the host doesn't need Python.
+
+Nothing is bind-mounted. SQL files and scripts are copied into the images, so the project also
+works when the Docker daemon runs in another WSL2 distro. **After editing `flink-sql/` or
+`scripts/`, run `just up` again** to rebuild.
 
 The Kafka side is Confluent's `cp-all-in-one` 7.9.0 compose
 ([quickstart](https://docs.confluent.io/platform/current/get-started/platform-quickstart.html)),
-plus Flink 1.19.1 (Confluent demo images with the JDBC connector added) and Postgres 16.
+plus Flink 1.19.1 (Confluent demo images) and Postgres 16.
 
 | Service | Container | Where |
 |---|---|---|
 | `broker` | `broker` | `localhost:9092` from your machine, `broker:29092` from containers |
 | `flink-jobmanager` | `flink-jobmanager` | Flink UI http://localhost:9081 (not 8081, which Schema Registry uses) |
 | `flink-taskmanager` | `flink-taskmanager` | 10 task slots |
-| `flink-sql-client` | `flink-sql-client` | `docker exec` into it to run SQL. `./flink-sql` is mounted at `/opt/flink-sql` |
+| `flink-sql-client` | `flink-sql-client` | Idle, `just sql` execs into it. SQL files are at `/opt/flink-sql` |
+| `kafka-init` | `kafka-init` | One-shot: creates topic `sensor-data`, then exits |
+| `flink-job-submit` | `flink-job-submit` | One-shot: submits the job, then exits |
+| `producer` | (`compose run`) | Profile `producer`, so `up` doesn't start it. `just produce` runs it |
 | `postgres` | `postgres` | `localhost:5433`, database `flink_demo`, user/password `flink_user`/`flink_pass` |
 | `control-center` | `control-center` | http://localhost:9021 |
 | `schema-registry`, `connect`, `ksqldb-*`, `rest-proxy`, `ksql-datagen` | same | Come with cp-all-in-one. The pipeline doesn't use them |
@@ -31,24 +52,24 @@ of them at a time.
 ## Files
 
 ```text
-docker-compose.yml               cp-all-in-one 7.9.0 + Flink 1.19.1 + Postgres
-Dockerfile.flink-cnf             jobmanager/taskmanager image: cnfldemos/flink-kafka + jars/*.jar in /opt/flink/lib
-Dockerfile.sql-client            SQL client image: cnfldemos/flink-sql-client-kafka + jars/*.jar in /opt/flink/lib
-init.sql                         Postgres tables sensor_readings and sensor_duplicates (runs on first start)
+docker-compose.yml                   cp-all-in-one 7.9.0 + Flink 1.19.1 + Postgres + kafka-init + job-submit + producer
+justfile                             every command as a recipe
+flink/Dockerfile                     targets `flink` (JM/TM) and `sql-client`: base image + jars (+ SQL, script)
+scripts/submit-job.sh                flink-job-submit entrypoint: skip if running, submit, verify RUNNING
 flink-sql/flink_sql_source_sink.sql  DDL: sensor_source (Kafka) and sensor_sink (JDBC → sensor_readings)
 flink-sql/flink_sql_dedup_job.sql    INSERT INTO sensor_sink ... ROW_NUMBER() dedup
-data-generator/data_generator.py     random readings, as fast as it can send, until Ctrl+C
-justfile                         every command below as a recipe
-jars/                            connector jars (gitignored, `just jars` downloads them)
+postgres/Dockerfile, init.sql        postgres:16 + tables sensor_readings and sensor_duplicates
+data-generator/                      producer: data_generator.py, requirements.txt, Dockerfile (python + uv)
 ```
 
 ## Quick start
 
-Needs `docker`, [`just`](https://github.com/casey/just), `uv`, `wget` and `curl` on the host.
+Needs `docker` and [`just`](https://github.com/casey/just). Internet access is needed on the first
+build.
 
 ```sh
-just all          # download jars, build Flink images, start the stack, submit the Flink job
-just produce      # send readings for 5 s (`just produce 30`, or `just produce 0` until Ctrl+C)
+just up           # build, start, wait until the Flink job is RUNNING
+just produce      # send readings for 5 s (`just produce 30`, `just produce 0 10` = until Ctrl+C at 10/s)
 just count        # rows in Postgres sensor_readings
 just rows         # latest 10 rows (`just rows 50`)
 just clean        # stop and delete volumes
@@ -58,59 +79,54 @@ just clean        # stop and delete volumes
 
 | Recipe | Does |
 |---|---|
-| `all` | `up` + `submit` |
-| `jars` | Downloads the JDBC connector and Postgres driver into `jars/` (skips files already there) |
-| `build` | `jars`, then builds `flink-cnf-with-jdbc:1.19.1` and `flink-sql-client-with-jars:latest` |
-| `up` | `build`, then `docker compose up -d --wait` |
-| `status` | `compose ps`, `\d sensor_readings`, connector jars on the JobManager classpath |
-| `topic` | Creates `sensor-data` explicitly (optional, it's auto-created on first produce) |
-| `wait-flink` | Waits up to 2 min for the Flink REST API and one registered TaskManager |
-| `submit` | `wait-flink`, then creates the tables and submits the dedup `INSERT` |
+| `up` | `docker compose up -d --build`, then waits for `flink-job-submit` and prints its result |
+| `build` | Builds all images, including the producer |
+| `status` | `compose ps`, running Flink jobs, `\d sensor_readings` |
+| `submit` | Runs `flink-job-submit` again (e.g. after `just cancel`). A no-op if the job is running |
 | `sql` | Interactive Flink SQL client with `sensor_source`/`sensor_sink` already defined |
-| `produce [secs]` | Runs the Python producer for `secs` seconds (default 5, `0` = until Ctrl+C) |
+| `produce [secs] [rate]` | Producer container for `secs` (default 5, `0` = until Ctrl+C) at `rate` msgs/s (`0` = max) |
+| `produce-local [secs] [rate]` | The same on the host with `uv run`, against `localhost:9092` |
 | `count`, `rows [n]` | Query Postgres `sensor_readings` |
 | `consume [n]` | First `n` raw messages on `sensor-data` |
 | `jobs`, `cancel <id>` | List or cancel Flink jobs |
 | `logs [svc]` | Follow logs for all services or one |
 | `down` / `clean` | Stop the stack, keeping / deleting the Postgres volume |
 
-The Flink job shows up at http://localhost:9081/#/overview, and the classpath under
+The job shows up at http://localhost:9081/#/overview, and the classpath under
 http://localhost:9081/#/job-manager/config.
 
-### What the recipes do
+### How the automation works
 
 **Jars.** They have to match Flink 1.19 and end up in `/opt/flink/lib`, which is where the
-classloader looks. The Dockerfiles copy `jars/*.jar` into that directory, so `build` downloads them
-first. If `jars/` is empty, the build fails.
+classloader looks. `flink/Dockerfile` uses `ADD --checksum=sha256:...` for both, in the `flink`
+stage. The `sql-client` stage copies them from that stage, so they're downloaded once. To change a
+version, update the URL and its checksum together.
 
-**Submitting.** `submit` runs
-`sql-client.sh -i flink_sql_source_sink.sql -f flink_sql_dedup_job.sql`. `-i` creates the tables in
-the session and `-f` submits the `INSERT`. The client exits after that, but the job keeps running on
-the cluster as a streaming job until you cancel it. You can submit it before or after you start
-producing, because the source reads from `earliest-offset`.
+**Ordering.** The JobManager's healthcheck passes once `/overview` reports at least one TaskManager,
+and Postgres's once `pg_isready` answers over TCP (that only happens after `init.sql` has run).
+`kafka-init` retries `kafka-topics --create --if-not-exists` until the broker accepts it.
+`flink-job-submit` has `depends_on` on all three: `service_healthy` for the JobManager and Postgres,
+`service_completed_successfully` for `kafka-init`.
 
-**Producing.** The producer only needs `kafka-python`. `uv run --with-requirements` runs it without
-a venv. It sends to `localhost:9092` in a tight loop with no sleep, which is why `produce` stops it
-(SIGINT, so it flushes) after a few seconds by default.
+**Submitting.** `scripts/submit-job.sh` runs
+`sql-client.sh -i <SET pipeline.name + flink_sql_source_sink.sql> -f flink_sql_dedup_job.sql`.
+`sql-client` exits 0 even when a statement fails, so the script then polls `/jobs/overview` for up to
+60 s, until the job named `sensor-dedup` is RUNNING. If it isn't, the script exits 1, and so does
+`just up`. The source reads from `earliest-offset`, so it doesn't matter whether you produce before or
+after the job starts.
+
+**Producer.** `data_generator.py` reads `BOOTSTRAP_SERVERS` (default `localhost:9092`, the
+container uses `broker:29092`), `TOPIC`, `RATE` and `DURATION`. On SIGINT/SIGTERM it flushes
+before exiting.
 
 ### Without just
 
 ```sh
-wget -P jars https://repo1.maven.org/maven2/org/apache/flink/flink-connector-jdbc/3.2.0-1.19/flink-connector-jdbc-3.2.0-1.19.jar
-wget -P jars https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
-docker build -f Dockerfile.flink-cnf   -t flink-cnf-with-jdbc:1.19.1 .
-docker build -f Dockerfile.sql-client  -t flink-sql-client-with-jars:latest .
-docker compose up -d --wait
-
-docker exec -it flink-sql-client /opt/flink/bin/sql-client.sh \
-  -i /opt/flink-sql/flink_sql_source_sink.sql \
-  -f /opt/flink-sql/flink_sql_dedup_job.sql
-
-uv run --with-requirements data-generator/requirements.txt data-generator/data_generator.py   # Ctrl+C to stop
-
+docker compose up -d --build                  # flink-job-submit submits the job
+docker logs flink-job-submit | grep '^Job'    # "Job 'sensor-dedup' is RUNNING"
+docker compose run --rm -e DURATION=5 producer
 docker exec postgres psql -U flink_user -d flink_demo -c 'SELECT count(*) FROM sensor_readings'
-docker exec broker kafka-console-consumer --bootstrap-server broker:29092 \
-  --topic sensor-data --from-beginning --max-messages 10
+docker compose --profile producer down -v
 ```
 
 ## How the dedup works
@@ -170,8 +186,8 @@ These are unbounded streaming queries, and the result view keeps updating until 
 ## Caveats and next steps
 
 - **State grows without limit.** Every distinct `(device_id, tag, timestamp)` stays in dedup state
-  forever. For anything long-running, set `SET 'table.exec.state.ttl' = '1 h';` (or similar) before
-  the `INSERT`.
+  forever. For anything long-running, add `SET 'table.exec.state.ttl' = '1 h';` (or similar) next to the
+  `pipeline.name` line in `scripts/submit-job.sh`.
 - **No checkpointing is configured.** The JDBC sink still flushes on its 1 s interval, but if the job
   restarts it re-reads from `earliest-offset`. The upsert key keeps that idempotent. Turn on
   `execution.checkpointing.interval` for real fault tolerance.
@@ -183,8 +199,6 @@ These are unbounded streaming queries, and the result view keeps updating until 
 - **Rerunning the DDL file in the same session fails.** It drops `sensor_sink` but not
   `sensor_source`. Each new `sql-client.sh` session starts with an empty in-memory catalog, so
   running the commands above again is fine.
-- The `./jars` → `/opt/flink/usrlib` mounts aren't needed, because the jars are baked into the images.
-  They're left over from an earlier "copy at startup" approach (commented out in the compose file).
 - The credentials (`flink_user`/`flink_pass`) are hardcoded in `docker-compose.yml` and the DDL, and
   all ports bind to every interface. That's fine for a local PoC. Don't reuse it as-is anywhere
   else.
@@ -195,5 +209,5 @@ These are unbounded streaming queries, and the result view keeps updating until 
 just down         # stop, keep the Postgres volume
 just clean        # stop and delete volumes (Kafka data is in-container and goes either way)
 just jobs         # or cancel just the Flink job: find its id,
-just cancel <id>  # then cancel it (also possible from the Flink UI)
+just cancel <id>  # then cancel it (also possible from the Flink UI). `just submit` starts it again
 ```

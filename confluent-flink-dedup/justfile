@@ -2,60 +2,45 @@
 
 compose := "docker compose"
 psql := "docker exec postgres psql -U flink_user -d flink_demo"
-sql_client := "docker exec -it flink-sql-client /opt/flink/bin/sql-client.sh"
 flink := "docker exec flink-jobmanager /opt/flink/bin/flink"
-jdbc_jar := "https://repo1.maven.org/maven2/org/apache/flink/flink-connector-jdbc/3.2.0-1.19/flink-connector-jdbc-3.2.0-1.19.jar"
-pg_jar := "https://jdbc.postgresql.org/download/postgresql-42.7.3.jar"
 
 # List recipes
 default:
     @just --list --unsorted
 
-# Jars, images, stack and Flink job in one go (then run `just produce`)
-all: up submit
+# Build images, start the stack and wait for the Flink job to be RUNNING (then `just produce`)
+up:
+    {{compose}} up -d --build
+    @echo "Waiting for flink-job-submit (Flink + Postgres healthy, then submit)..."
+    @code=$(docker wait flink-job-submit); \
+      docker logs flink-job-submit 2>&1 | grep -E "^(Job|Submitting|Can't)" || true; \
+      test "$code" = 0
 
-# Download the connector jars into jars/ (skips files already there)
-jars:
-    wget -nc -q --show-progress -P jars {{jdbc_jar}} {{pg_jar}}
+# Build all images, including the producer (downloads the connector jars on first build)
+build:
+    {{compose}} --profile producer build
 
-# Build the Flink images with the jars baked into /opt/flink/lib
-build: jars
-    docker build -f Dockerfile.flink-cnf  -t flink-cnf-with-jdbc:1.19.1 .
-    docker build -f Dockerfile.sql-client -t flink-sql-client-with-jars:latest .
-
-# Build the images and start the stack detached (waits for Postgres to be healthy)
-up: build
-    {{compose}} up -d --wait
-
-# Wait (up to 2 min) until the Flink REST API answers and a TaskManager has registered
-wait-flink:
-    @timeout 120 sh -c 'until curl -fs localhost:9081/overview | grep -q "\"taskmanagers\":[1-9]"; do sleep 2; done' \
-      || { echo "Flink not ready on :9081"; exit 1; }
-
-# Containers, Postgres table and connector jars on the Flink classpath
+# Containers, Flink jobs and the Postgres table
 status:
-    @{{compose}} ps
+    @{{compose}} ps -a
+    @echo; {{flink}} list -m localhost:9081 2>/dev/null | grep -v '^Waiting' || true
     @echo; {{psql}} -c '\d sensor_readings'
-    @docker exec flink-jobmanager ls /opt/flink/lib | grep -E 'jdbc|postgres'
 
-# Create the sensor-data topic explicitly (optional, it's auto-created)
-topic:
-    docker exec broker kafka-topics --bootstrap-server broker:29092 --create --if-not-exists \
-      --topic sensor-data --partitions 1 --replication-factor 1
-
-# Create the tables and submit the dedup INSERT job to the cluster
-submit: wait-flink
-    {{sql_client}} -i /opt/flink-sql/flink_sql_source_sink.sql -f /opt/flink-sql/flink_sql_dedup_job.sql
+# Submit the dedup job again if it isn't running (e.g. after `just cancel`)
+submit:
+    {{compose}} run --rm flink-job-submit
 
 # Interactive Flink SQL client with sensor_source/sensor_sink already defined
 sql:
-    {{sql_client}} -i /opt/flink-sql/flink_sql_source_sink.sql
+    docker exec -it flink-sql-client /opt/flink/bin/sql-client.sh -i /opt/flink-sql/flink_sql_source_sink.sql
 
-# Run the producer for N seconds (0 = until Ctrl+C)
-produce secs="5":
-    {{ if secs == "0" { "" } else { "timeout --foreground -s INT " + secs } }} \
-      uv run --with-requirements data-generator/requirements.txt data-generator/data_generator.py \
-      || test $? -eq 124
+# Run the producer container for N seconds (0 = until Ctrl+C) at R msgs/s (0 = as fast as possible)
+produce secs="5" rate="0":
+    {{compose}} run --rm -e DURATION={{secs}} -e RATE={{rate}} producer
+
+# Run the producer on the host with uv instead (needs uv, talks to localhost:9092)
+produce-local secs="5" rate="0":
+    DURATION={{secs}} RATE={{rate}} uv run --with-requirements data-generator/requirements.txt data-generator/data_generator.py
 
 # Row count in Postgres sensor_readings
 count:
@@ -84,8 +69,8 @@ logs *svc:
 
 # Stop and remove containers (keeps the Postgres volume)
 down:
-    {{compose}} down --remove-orphans
+    {{compose}} --profile producer down --remove-orphans
 
-# Stop and remove containers and volumes (Postgres data is lost)
+# Stop and remove containers and volumes (Postgres data is lost; init.sql runs again next `up`)
 clean:
-    {{compose}} down -v --remove-orphans
+    {{compose}} --profile producer down -v --remove-orphans
