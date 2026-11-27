@@ -38,81 +38,77 @@ init.sql                         Postgres tables sensor_readings and sensor_dupl
 flink-sql/flink_sql_source_sink.sql  DDL: sensor_source (Kafka) and sensor_sink (JDBC → sensor_readings)
 flink-sql/flink_sql_dedup_job.sql    INSERT INTO sensor_sink ... ROW_NUMBER() dedup
 data-generator/data_generator.py     random readings, as fast as it can send, until Ctrl+C
-jars/                            connector jars (gitignored, download them below)
+justfile                         every command below as a recipe
+jars/                            connector jars (gitignored, `just jars` downloads them)
 ```
 
 ## Quick start
 
-### 1. Download the connector jars
+Needs `docker`, [`just`](https://github.com/casey/just), `uv`, `wget` and `curl` on the host.
 
-The jars have to match Flink 1.19 and end up in `/opt/flink/lib`, which is where the classloader
-looks. The Dockerfiles copy `jars/*.jar` into that directory, so download the jars **before** you
-build. If `jars/` is empty, the build fails.
+```sh
+just all          # download jars, build Flink images, start the stack, submit the Flink job
+just produce      # send readings for 5 s (`just produce 30`, or `just produce 0` until Ctrl+C)
+just count        # rows in Postgres sensor_readings
+just rows         # latest 10 rows (`just rows 50`)
+just clean        # stop and delete volumes
+```
+
+`just` on its own lists every recipe:
+
+| Recipe | Does |
+|---|---|
+| `all` | `up` + `submit` |
+| `jars` | Downloads the JDBC connector and Postgres driver into `jars/` (skips files already there) |
+| `build` | `jars`, then builds `flink-cnf-with-jdbc:1.19.1` and `flink-sql-client-with-jars:latest` |
+| `up` | `build`, then `docker compose up -d --wait` |
+| `status` | `compose ps`, `\d sensor_readings`, connector jars on the JobManager classpath |
+| `topic` | Creates `sensor-data` explicitly (optional, it's auto-created on first produce) |
+| `wait-flink` | Waits up to 2 min for the Flink REST API and one registered TaskManager |
+| `submit` | `wait-flink`, then creates the tables and submits the dedup `INSERT` |
+| `sql` | Interactive Flink SQL client with `sensor_source`/`sensor_sink` already defined |
+| `produce [secs]` | Runs the Python producer for `secs` seconds (default 5, `0` = until Ctrl+C) |
+| `count`, `rows [n]` | Query Postgres `sensor_readings` |
+| `consume [n]` | First `n` raw messages on `sensor-data` |
+| `jobs`, `cancel <id>` | List or cancel Flink jobs |
+| `logs [svc]` | Follow logs for all services or one |
+| `down` / `clean` | Stop the stack, keeping / deleting the Postgres volume |
+
+The Flink job shows up at http://localhost:9081/#/overview, and the classpath under
+http://localhost:9081/#/job-manager/config.
+
+### What the recipes do
+
+**Jars.** They have to match Flink 1.19 and end up in `/opt/flink/lib`, which is where the
+classloader looks. The Dockerfiles copy `jars/*.jar` into that directory, so `build` downloads them
+first. If `jars/` is empty, the build fails.
+
+**Submitting.** `submit` runs
+`sql-client.sh -i flink_sql_source_sink.sql -f flink_sql_dedup_job.sql`. `-i` creates the tables in
+the session and `-f` submits the `INSERT`. The client exits after that, but the job keeps running on
+the cluster as a streaming job until you cancel it. You can submit it before or after you start
+producing, because the source reads from `earliest-offset`.
+
+**Producing.** The producer only needs `kafka-python`. `uv run --with-requirements` runs it without
+a venv. It sends to `localhost:9092` in a tight loop with no sleep, which is why `produce` stops it
+(SIGINT, so it flushes) after a few seconds by default.
+
+### Without just
 
 ```sh
 wget -P jars https://repo1.maven.org/maven2/org/apache/flink/flink-connector-jdbc/3.2.0-1.19/flink-connector-jdbc-3.2.0-1.19.jar
 wget -P jars https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
-```
-
-### 2. Build the Flink images and start the stack
-
-```sh
 docker build -f Dockerfile.flink-cnf   -t flink-cnf-with-jdbc:1.19.1 .
 docker build -f Dockerfile.sql-client  -t flink-sql-client-with-jars:latest .
-docker compose up -d
-```
+docker compose up -d --wait
 
-Check that it came up:
-
-```sh
-docker compose ps
-docker exec postgres psql -U flink_user -d flink_demo -c '\d sensor_readings'
-docker exec flink-jobmanager ls /opt/flink/lib | grep -E 'jdbc|postgres'
-```
-
-The classpath is also listed under http://localhost:9081/#/job-manager/config.
-
-### 3. Submit the Flink job
-
-```sh
 docker exec -it flink-sql-client /opt/flink/bin/sql-client.sh \
   -i /opt/flink-sql/flink_sql_source_sink.sql \
   -f /opt/flink-sql/flink_sql_dedup_job.sql
-```
 
-`-i` creates the tables in the session and `-f` submits the `INSERT`. The client exits after that,
-but the job keeps running on the cluster as a streaming job until you cancel it. You can submit it
-before or after you start producing, because the source reads from `earliest-offset`. The job shows
-up at http://localhost:9081/#/overview.
+uv run --with-requirements data-generator/requirements.txt data-generator/data_generator.py   # Ctrl+C to stop
 
-The `sensor-data` topic is auto-created on the first produce. If the job starts first, the topic is
-created when the source subscribes. To create it explicitly:
-
-```sh
-docker exec broker kafka-topics --bootstrap-server broker:29092 --create \
-  --topic sensor-data --partitions 1 --replication-factor 1
-```
-
-### 4. Produce data
-
-```sh
-uv run --with-requirements data-generator/requirements.txt data-generator/data_generator.py
-```
-
-The generator only needs `kafka-python`. It sends to `localhost:9092` in a tight loop with no
-sleep, so stop it with Ctrl+C after a few seconds.
-
-### 5. Look at the results
-
-```sh
 docker exec postgres psql -U flink_user -d flink_demo -c 'SELECT count(*) FROM sensor_readings'
-docker exec postgres psql -U flink_user -d flink_demo \
-  -c 'SELECT * FROM sensor_readings ORDER BY "timestamp" DESC LIMIT 10'
-```
-
-Read the raw topic:
-
-```sh
 docker exec broker kafka-console-consumer --bootstrap-server broker:29092 \
   --topic sensor-data --from-beginning --max-messages 10
 ```
@@ -147,11 +143,7 @@ to arrive wins.
 
 ### Checking duplicates in Flink SQL
 
-Start an interactive client with the tables defined:
-
-```sh
-docker exec -it flink-sql-client /opt/flink/bin/sql-client.sh -i /opt/flink-sql/flink_sql_source_sink.sql
-```
+Start an interactive client with the tables defined (`just sql`), then:
 
 ```sql
 -- total records on the topic
@@ -200,8 +192,8 @@ These are unbounded streaming queries, and the result view keeps updating until 
 ## Cleanup
 
 ```sh
-docker compose down -v      # stop and delete the Postgres volume (Kafka data is in-container and goes with it)
+just down         # stop, keep the Postgres volume
+just clean        # stop and delete volumes (Kafka data is in-container and goes either way)
+just jobs         # or cancel just the Flink job: find its id,
+just cancel <id>  # then cancel it (also possible from the Flink UI)
 ```
-
-To cancel just the Flink job, use the Flink UI, or run
-`docker exec flink-jobmanager flink list -m localhost:9081` and then `flink cancel -m localhost:9081 <job-id>`.
