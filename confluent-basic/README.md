@@ -25,16 +25,32 @@ on `127.0.0.1` only. The broker port has no authentication either; both are for 
 
 ## Start / Stop
 
+Common tasks are wrapped in a [`justfile`](justfile). Run `just` to list the recipes.
+
 ```sh
-docker compose up -d            # start
-docker compose ps               # both containers; kafka-broker should be (healthy)
-docker logs -f kafka-broker     # follow logs (Ctrl+C to stop following)
-docker compose down             # stop (data is kept in the volume)
-docker compose down -v          # stop AND delete all Kafka data
+just up             # start, waiting until the broker is healthy
+just status         # containers + Kafka UI cluster status
+just logs kafka     # follow broker logs (no argument = all services)
+just down           # stop (data is kept in the volume)
+just clean          # stop AND delete all Kafka data (asks for confirmation)
 ```
+
+Plain Compose works too: `docker compose up -d --wait`, `docker compose down [-v]`.
 
 The broker has a healthcheck (`kafka-broker-api-versions`), and Kafka UI only starts once it's
 healthy. Then open http://localhost:8080.
+
+### Recipes
+
+| Area | Recipes |
+|---|---|
+| Stack | `up`, `down`, `clean`, `restart [svc]`, `status`, `logs [svc]`, `pull`, `shell` |
+| Cluster | `quorum` (KRaft quorum status), `uuid` (new `CLUSTER_ID`) |
+| Topics | `topics`, `create <topic> [partitions=3]`, `describe <topic>`, `partitions <topic> <n>`, `config <topic> <key=value>`, `configs <topic>`, `offsets <topic>`, `delete <topic>` |
+| Produce / consume | `produce <topic>` (`key:value` lines), `consume <topic> [group]`, `replay <topic>` |
+| Consumer groups | `groups`, `group <group>` (offsets and lag), `reset <group> <topic> [mode=execute\|dry-run]`, `delete-group <group>` |
+
+`clean` and `delete` ask for confirmation first.
 
 ## Kafka UI
 
@@ -135,6 +151,10 @@ The Confluent image ships the tools **without** the `.sh` suffix (`kafka-topics`
 
 Use `-it` for commands you type into interactively (producer). For one-shot commands, plain
 `docker exec` is enough.
+
+The raw commands are shown so you can see what's going on. Each one has a shorter `just`
+equivalent (see [Recipes](#recipes)). For example, the pub/sub demo below is
+`just consume orders billing`, `just consume orders shipping` and `just produce orders`.
 
 ### List / create / describe topics
 

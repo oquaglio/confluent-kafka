@@ -1,0 +1,135 @@
+# Single-node Kafka (KRaft) + Kafka UI. `just` lists recipes.
+
+compose := "docker compose"
+kafka := "docker exec kafka-broker"
+kafka_it := "docker exec -it kafka-broker"
+bs := "--bootstrap-server localhost:9092"
+ui := "http://localhost:8080"
+
+# List recipes
+default:
+    @just --list --unsorted
+
+# --- Stack ---
+
+# Start the broker and Kafka UI, waiting until the broker is healthy
+up:
+    {{compose}} up -d --wait
+    @echo "Kafka UI: {{ui}}  |  broker: localhost:9092"
+
+# Stop and remove containers (keeps the kafka-data volume)
+down:
+    {{compose}} down --remove-orphans
+
+# Stop and remove containers AND the kafka-data volume (all topics and offsets are lost)
+[confirm("Delete the kafka-data volume and all Kafka data? [y/N]")]
+clean:
+    {{compose}} down -v --remove-orphans
+
+# Restart one service, or all (`just restart kafka-ui`)
+restart *svc:
+    {{compose}} restart {{svc}}
+
+# Containers, broker health and Kafka UI cluster status
+status:
+    @{{compose}} ps -a
+    @echo; curl -fs {{ui}}/api/clusters || echo "Kafka UI not reachable at {{ui}}"
+    @echo
+
+# Follow logs (all services, or one: `just logs kafka`)
+logs *svc:
+    {{compose}} logs -f {{svc}}
+
+# Pull the pinned images again
+pull:
+    {{compose}} pull
+
+# Shell inside the broker container
+shell:
+    {{kafka_it}} bash
+
+# --- Cluster ---
+
+# KRaft controller quorum status
+quorum:
+    {{kafka}} kafka-metadata-quorum {{bs}} describe --status
+
+# Generate a new cluster ID for CLUSTER_ID (needs `just clean` before it takes effect)
+uuid:
+    {{kafka}} kafka-storage random-uuid
+
+# --- Topics ---
+
+# List topics (internal ones included)
+topics:
+    {{kafka}} kafka-topics {{bs}} --list
+
+# Create a topic (`just create orders 3`)
+create topic partitions="3":
+    {{kafka}} kafka-topics {{bs}} --create --if-not-exists --topic {{topic}} \
+      --partitions {{partitions}} --replication-factor 1
+
+# Partitions, leader, replicas and ISR of a topic
+describe topic:
+    {{kafka}} kafka-topics {{bs}} --describe --topic {{topic}}
+
+# Increase a topic's partition count (you can't decrease it)
+partitions topic count:
+    {{kafka}} kafka-topics {{bs}} --alter --topic {{topic}} --partitions {{count}}
+
+# Set a topic config (`just config orders retention.ms=3600000`)
+config topic setting:
+    {{kafka}} kafka-configs {{bs}} --entity-type topics --entity-name {{topic}} --alter --add-config {{setting}}
+
+# Show a topic's overridden configs
+configs topic:
+    {{kafka}} kafka-configs {{bs}} --entity-type topics --entity-name {{topic}} --describe
+
+# Latest offset of each partition (partition:offset)
+offsets topic:
+    {{kafka}} kafka-get-offsets {{bs}} --topic {{topic}}
+
+# Delete a topic
+[confirm("Delete the topic? [y/N]")]
+delete topic:
+    {{kafka}} kafka-topics {{bs}} --delete --topic {{topic}}
+
+# --- Produce / consume ---
+
+# Interactive producer: type `key:value` lines, Ctrl+D to quit
+produce topic:
+    {{kafka_it}} kafka-console-producer {{bs}} --topic {{topic}} \
+      --reader-property parse.key=true --reader-property key.separator=:
+
+# Live consumer showing key, partition and offset (`just consume orders billing`; no group = throwaway group)
+consume topic group="":
+    {{kafka_it}} kafka-console-consumer {{bs}} --topic {{topic}} \
+      {{ if group == "" { "" } else { "--group " + group } }} \
+      --formatter-property print.key=true --formatter-property print.partition=true \
+      --formatter-property print.offset=true
+
+# Read everything in a topic from the start, then exit after 5s of no new messages
+replay topic:
+    {{kafka}} kafka-console-consumer {{bs}} --topic {{topic}} --from-beginning --timeout-ms 5000 \
+      --formatter-property print.key=true --formatter-property print.partition=true \
+      --formatter-property print.offset=true --formatter-property print.timestamp=true \
+      2>&1 | grep -v -e TimeoutException -e 'Error processing message' -e KIP-848 -e '^\s*at ' || true
+
+# --- Consumer groups ---
+
+# List consumer groups
+groups:
+    {{kafka}} kafka-consumer-groups {{bs}} --list
+
+# Per-partition committed offset, log-end offset and lag of a group
+group group:
+    {{kafka}} kafka-consumer-groups {{bs}} --describe --group {{group}}
+
+# Rewind a group to the start of a topic (group must have no running consumers; mode=dry-run previews)
+reset group topic mode="execute":
+    {{kafka}} kafka-consumer-groups {{bs}} --group {{group}} --topic {{topic}} \
+      --reset-offsets --to-earliest --{{mode}}
+
+# Delete a consumer group
+delete-group group:
+    {{kafka}} kafka-consumer-groups {{bs}} --delete --group {{group}}
