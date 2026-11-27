@@ -6,17 +6,17 @@ to learn the core Kafka concepts with the built-in CLI tools, and watch the resu
 
 ## Docs
 
-- https://developer.confluent.io/confluent-tutorials/kafka-on-docker/
-- https://kafka.apache.org/documentation/
-- https://ui.docs.kafbat.io/
+- <https://developer.confluent.io/confluent-tutorials/kafka-on-docker/>
+- <https://kafka.apache.org/documentation/>
+- <https://ui.docs.kafbat.io/>
 
 ## Endpoints
 
 | Endpoint | URL / address | What |
-|---|---|---|
-| Kafka UI | http://localhost:8080 | Web console: topics, messages, consumer groups, brokers |
-| Kafka UI health | http://localhost:8080/actuator/health | Returns `{"status":"UP"}` when the UI is running |
-| Kafka UI REST API | http://localhost:8080/api/clusters | The API the UI itself uses (e.g. `/api/clusters/local/topics`) |
+| --- | --- | --- |
+| Kafka UI | <http://localhost:8080> | Web console: topics, messages, consumer groups, brokers |
+| Kafka UI health | <http://localhost:8080/actuator/health> | Returns `{"status":"UP"}` when the UI is running |
+| Kafka UI REST API | <http://localhost:8080/api/clusters> | The API the UI itself uses (e.g. `/api/clusters/local/topics`) |
 | Kafka broker (host) | `localhost:9092` | Kafka protocol, not HTTP. For clients on your machine |
 | Kafka broker (compose network) | `kafka:29092` | Kafka protocol, for other containers in this project |
 
@@ -38,12 +38,12 @@ just clean          # stop AND delete all Kafka data (asks for confirmation)
 Plain Compose works too: `docker compose up -d --wait`, `docker compose down [-v]`.
 
 The broker has a healthcheck (`kafka-broker-api-versions`), and Kafka UI only starts once it's
-healthy. Then open http://localhost:8080.
+healthy. Then open <http://localhost:8080>.
 
 ### Recipes
 
 | Area | Recipes |
-|---|---|
+| --- | --- |
 | Stack | `up`, `down`, `clean`, `restart [svc]`, `status`, `logs [svc]`, `pull`, `shell` |
 | Cluster | `quorum` (KRaft quorum status), `uuid` (new `CLUSTER_ID`) |
 | Topics | `topics`, `create <topic> [partitions=3]`, `describe <topic>`, `partitions <topic> <n>`, `config <topic> <key=value>`, `configs <topic>`, `offsets <topic>`, `delete <topic>` |
@@ -78,7 +78,7 @@ stores its own metadata in an internal Raft log (`__cluster_metadata`). This one
 **both** roles:
 
 | Setting | Meaning |
-|---|---|
+| --- | --- |
 | `KAFKA_PROCESS_ROLES: broker,controller` | This node stores data *and* manages cluster metadata |
 | `KAFKA_NODE_ID: 1` | Unique ID of this node |
 | `KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093` | The controller quorum: just this node |
@@ -106,7 +106,7 @@ A Kafka client first connects to a *bootstrap* address. The broker then replies 
 address must be reachable from wherever the client runs.
 
 | Listener | Bind address | Advertised as | Used by |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `PLAINTEXT_HOST` | `0.0.0.0:9092` | `localhost:9092` | Clients on your machine (port 9092 is published) |
 | `PLAINTEXT` | `kafka:29092` | `kafka:29092` | Other containers on the compose network; inter-broker traffic |
 | `CONTROLLER` | `kafka:29093` | - | KRaft controller traffic only |
@@ -198,6 +198,8 @@ docker exec -it kafka-broker kafka-console-consumer --bootstrap-server localhost
 docker exec -it kafka-broker kafka-console-producer --bootstrap-server localhost:9092 \
   --topic orders --reader-property parse.key=true --reader-property key.separator=:
 ```
+
+Now, you can type key:value into the terminal and press enter to send the messages, e.g.:
 
 ```text
 > customer1:order-100
