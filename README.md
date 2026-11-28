@@ -15,6 +15,7 @@ README with concepts, start/stop commands and things to try.
 | [confluent-kafka-with-debezium](confluent-kafka-with-debezium/) | CDC: Postgres row changes captured by Debezium and applied to a second Postgres | Debezium source + JDBC sink, Schema Registry |
 | [confluent-kafka-avro](confluent-kafka-avro/) | Schema-first Avro: your `.avsc` is registered before anything produces, plus a schema evolution demo (compatible v2/v3, breaking v4 refused) | Schema Registry, Datagen, JDBC sink, Postgres |
 | [confluent-flink-dedup](confluent-flink-dedup/) | Flink SQL PoC: deduplicates sensor readings from Kafka into Postgres, fully automated (`just up`) | cp-all-in-one 8.4, Flink 2.2, Postgres 19, Kafka UI (:8080), Python producer |
+| [confluent-sim-offset-mismatch](confluent-sim-offset-mismatch/) | Sink connector moved to a new cluster loses its place: lost consumer-group offsets (JDBC sink) and a Snowflake-style offset token ahead of the new topic, each with break/detect/fix (`just s1`, `just s2`) | 2× `cp-kafka` + Connect, Postgres, Snowpipe Streaming emulator, Kafka UI (:8080) |
 
 The table runs roughly from basic to more involved. The Kafka projects publish overlapping host
-ports (9092, 8080–8083, 5432), so run only one at a time. `docker-compose-watch` only uses 8090.
+ports (9092, 9094, 8080–8084, 5432), so run only one at a time. `docker-compose-watch` only uses 8090.

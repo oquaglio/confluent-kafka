@@ -1,0 +1,205 @@
+# Simulates a sink connector losing its place when it is moved from one Kafka cluster to another.
+#
+#   kafka-a        - "old" cluster (single KRaft node), host port 9092
+#   kafka-b        - "new" cluster (single KRaft node, different CLUSTER_ID), host port 9094
+#   connect-a      - Connect worker on cluster A with the JDBC sink plugin, REST http://localhost:8083
+#   connect-b      - Connect worker on cluster B, same image, REST http://localhost:8084
+#   postgres       - the shared target (plays the Snowflake account), host port 5432
+#   sf-emulator-a  - Snowpipe Streaming emulator sink reading cluster A   (profile: emulator)
+#   sf-emulator-b  - the same emulator reading cluster B                  (profile: emulator)
+#   kafka-ui       - both clusters and both Connect workers, http://localhost:8080
+#
+# Nothing is wired up automatically: connectors, emulators and producers are started by the
+# scenario scripts (see the justfile) because *when* each one starts is the whole point.
+
+x-kafka-image: &kafka-image confluentinc/cp-kafka:8.1.0
+x-connect-image: &connect-image confluent-sim-offset-mismatch/connect:8.1.0
+x-emulator-image: &emulator-image confluent-sim-offset-mismatch/sf-emulator:0.1.0
+
+x-kafka-env: &kafka-env
+  KAFKA_NODE_ID: 1
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+  KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # scripts create `orders` explicitly
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+x-connect-env: &connect-env
+  CONNECT_GROUP_ID: connect-cluster
+  CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+  CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+  CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+  CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+  CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+  CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+  # Keys are plain strings (the seq), values are JSON with an embedded schema. No Schema Registry,
+  # so there is nothing to keep in sync between the two clusters.
+  CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+  CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+  CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"
+  # Commit sink offsets every 5s instead of 60s so consumer-group output reflects reality quickly.
+  CONNECT_OFFSET_FLUSH_INTERVAL_MS: 5000
+  # Lets connector configs say ${env:POSTGRES_PASSWORD} instead of holding the password.
+  CONNECT_CONFIG_PROVIDERS: env
+  CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+  CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+  CONNECT_LOG4J_LOGGERS: org.reflections=ERROR
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB}
+
+x-emulator: &emulator
+  build: sf-emulator
+  image: *emulator-image
+  profiles: ["emulator"]
+  restart: "no"
+  depends_on:
+    postgres: { condition: service_healthy }
+
+services:
+  kafka-a:
+    image: *kafka-image
+    container_name: kafka-a
+    hostname: kafka-a
+    ports:
+      - "9092:9092"
+    environment:
+      <<: *kafka-env
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-a:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka-a:29092,CONTROLLER://kafka-a:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-a:29092,PLAINTEXT_HOST://localhost:9092
+      CLUSTER_ID: QUFBQUFBQUFBQUFBQUFBQQ
+    volumes:
+      - kafka-a-data:/var/lib/kafka/data
+    healthcheck: &kafka-health
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka-a:29092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  kafka-b:
+    image: *kafka-image
+    container_name: kafka-b
+    hostname: kafka-b
+    ports:
+      - "9094:9094"
+    environment:
+      <<: *kafka-env
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-b:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka-b:29092,CONTROLLER://kafka-b:29093,PLAINTEXT_HOST://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-b:29092,PLAINTEXT_HOST://localhost:9094
+      CLUSTER_ID: QkJCQkJCQkJCQkJCQkJCQg
+    volumes:
+      - kafka-b-data:/var/lib/kafka/data
+    healthcheck:
+      <<: *kafka-health
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka-b:29092 >/dev/null 2>&1"]
+
+  postgres:
+    build: postgres
+    image: confluent-sim-offset-mismatch/postgres:17
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  connect-a:
+    build: connect
+    image: *connect-image
+    container_name: connect-a
+    hostname: connect-a
+    depends_on:
+      kafka-a: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    ports:
+      - "8083:8083"
+    environment:
+      <<: *connect-env
+      CONNECT_BOOTSTRAP_SERVERS: kafka-a:29092
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect-a
+    healthcheck: &connect-health
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+  connect-b:
+    build: connect   # same image as connect-a; the second build is a cache hit
+    image: *connect-image
+    container_name: connect-b
+    hostname: connect-b
+    depends_on:
+      kafka-b: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    ports:
+      - "8084:8083"
+    environment:
+      <<: *connect-env
+      CONNECT_BOOTSTRAP_SERVERS: kafka-b:29092
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect-b
+    healthcheck: *connect-health
+
+  sf-emulator-a:
+    <<: *emulator
+    container_name: sf-emulator-a
+    environment: &emulator-env
+      BOOTSTRAP_SERVERS: kafka-a:29092
+      CLUSTER: a
+      # Same connector name on both clusters, as when the managed connector was re-created on the
+      # new cluster: same name -> same Snowflake channels -> same offset tokens.
+      CONNECTOR_NAME: orders-sf
+      TOPIC: orders
+      TARGET_TABLE: orders_sf
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+
+  sf-emulator-b:
+    <<: *emulator
+    container_name: sf-emulator-b
+    environment:
+      <<: *emulator-env
+      BOOTSTRAP_SERVERS: kafka-b:29092
+      CLUSTER: b
+
+  # kafbat/kafka-ui is the maintained fork of provectuslabs/kafka-ui. No login: localhost only.
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.5.1
+    container_name: kafka-ui
+    depends_on:
+      kafka-a: { condition: service_healthy }
+      kafka-b: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: cluster-a (old)
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: kafka-a:29092
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect-a
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://connect-a:8083
+      KAFKA_CLUSTERS_1_NAME: cluster-b (new)
+      KAFKA_CLUSTERS_1_BOOTSTRAP_SERVERS: kafka-b:29092
+      KAFKA_CLUSTERS_1_KAFKACONNECT_0_NAME: connect-b
+      KAFKA_CLUSTERS_1_KAFKACONNECT_0_ADDRESS: http://connect-b:8083
+
+volumes:
+  kafka-a-data:
+  kafka-b-data:
+  pg-data:

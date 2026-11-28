@@ -1,0 +1,103 @@
+# Sink connector offset mismatch after a cluster move. `just` lists recipes.
+
+set dotenv-load
+
+compose := "docker compose --profile emulator"
+
+# List recipes
+default:
+    @just --list --unsorted
+
+# --- Stack ---
+
+# Build images, start both clusters, Connect workers, Postgres and Kafka UI; create the topics
+up:
+    scripts/up.sh
+
+# Stop and remove containers (keeps volumes)
+down:
+    {{compose}} down --remove-orphans
+
+# Stop and remove containers AND volumes (both clusters and Postgres are wiped)
+[confirm("Delete both Kafka clusters and the Postgres volume? [y/N]")]
+clean:
+    {{compose}} down -v --remove-orphans
+
+# Connectors, emulators, consumer groups, topics and tables back to empty (no rebuild)
+reset:
+    scripts/reset.sh
+
+# Containers and connector states
+status:
+    @{{compose}} ps -a
+    @echo; for c in 8083 8084; do echo "connect :$c"; curl -s localhost:$c/connectors?expand=status | jq -r 'to_entries[] | "  \(.key): \(.value.status.connector.state)"' 2>/dev/null; done
+
+# Follow logs (all services, or one: `just logs sf-emulator-b`)
+logs *svc:
+    {{compose}} logs -f {{svc}}
+
+# --- Inspect ---
+
+# Produce n records with the next seq numbers to cluster a or b
+produce cluster n="100":
+    scripts/produce.sh {{cluster}} {{n}}
+
+# Rows per table and per source cluster
+count:
+    scripts/count.sh
+
+# Missing / duplicate seqs in both tables vs. what was produced
+gaps:
+    scripts/gaps.sh
+
+# Topic offsets and consumer groups on both clusters, plus the sf_channels offset tokens
+offsets:
+    scripts/offsets.sh
+
+# psql against the target database
+psql:
+    docker exec -it postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+
+# Remove duplicate seqs from orders_sf
+dedupe:
+    scripts/dedupe.sh
+
+# --- Scenario 1: consumer group offsets lost (JDBC sink) ---
+
+# Move the JDBC sink to cluster B with auto.offset.reset=latest, leaving a gap
+s1-break:
+    scripts/s1-break.sh
+
+# Show that the connector, its lag and its status all look healthy while the gap is real
+s1-detect:
+    scripts/s1-detect.sh
+
+# Stop the connector, rewind its offsets (mode: datetime | earliest), resume, verify
+s1-fix mode="datetime":
+    scripts/s1-fix.sh {{mode}}
+
+# Scenario 1 end to end; exits non-zero if the fix didn't close the gap
+s1 mode="datetime": reset s1-break s1-detect
+    scripts/s1-fix.sh {{mode}}
+
+# --- Scenario 2: offset token in the target ahead of the new cluster (Snowflake-like) ---
+
+# Move the Snowpipe Streaming emulator to cluster B; records are skipped as "already ingested"
+s2-break:
+    scripts/s2-break.sh
+
+# Show the token vs log-end mismatch, the negative lag and the skipped records
+s2-detect:
+    scripts/s2-detect.sh
+
+# Show that a consumer group reset doesn't help, then reset the channel token and replay
+s2-fix:
+    scripts/s2-fix.sh
+
+# Scenario 2 end to end; exits non-zero if the fix didn't close the gap
+s2: reset s2-break s2-detect s2-fix
+
+# Both scenarios, one after the other (separate runs: just would only run the shared `reset` once)
+all:
+    just s1
+    just s2

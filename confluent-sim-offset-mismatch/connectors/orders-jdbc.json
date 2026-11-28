@@ -1,0 +1,17 @@
+{
+  "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+  "topics": "orders",
+  "tasks.max": "1",
+
+  "connection.url": "jdbc:postgresql://postgres:5432/${env:POSTGRES_DB}",
+  "connection.user": "${env:POSTGRES_USER}",
+  "connection.password": "${env:POSTGRES_PASSWORD}",
+
+  "table.name.format": "orders_jdbc",
+  "auto.create": "false",
+  "insert.mode": "upsert",
+  "pk.mode": "record_value",
+  "pk.fields": "seq",
+
+  "consumer.override.auto.offset.reset": "${AUTO_OFFSET_RESET}"
+}
