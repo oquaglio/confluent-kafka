@@ -213,14 +213,60 @@ Sources:
 - [Confluent Cloud: manage offsets for fully-managed connectors](https://docs.confluent.io/cloud/current/connectors/offsets.html)
 - [KIP-875: first-class offsets support in Kafka Connect](https://cwiki.apache.org/confluence/display/KAFKA/KIP-875%3A+First-class+offsets+support+in+Kafka+Connect)
 
-## Ports and credentials
+## Endpoints
 
-| Service | Host port |
+### From the host
+
+| Service | Endpoint | Protocol | Notes |
+| --- | --- | --- | --- |
+| Kafka UI | http://localhost:8080 | HTTP | both clusters and both Connect workers; bound to 127.0.0.1 |
+| Kafka cluster A (old) | `localhost:9092` | Kafka (PLAINTEXT) | e.g. `kcat -b localhost:9092 -L` |
+| Kafka cluster B (new) | `localhost:9094` | Kafka (PLAINTEXT) | |
+| Connect A REST | http://localhost:8083 | HTTP | worker on cluster A |
+| Connect B REST | http://localhost:8084 | HTTP | worker on cluster B |
+| Postgres | `localhost:5432` | PostgreSQL | `postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5432/$POSTGRES_DB` (values from `.env`) |
+
+The emulators (`sf-emulator-a`, `sf-emulator-b`) don't listen on any port; use `just logs sf-emulator-b`.
+
+### Inside the compose network
+
+| Service | Address |
 | --- | --- |
-| kafka-a / kafka-b | 9092 / 9094 |
-| connect-a / connect-b REST | 8083 / 8084 |
-| Postgres | 5432 |
-| Kafka UI (both clusters) | 127.0.0.1:8080 |
+| kafka-a / kafka-b brokers | `kafka-a:29092` / `kafka-b:29092` |
+| kafka-a / kafka-b KRaft controllers | `kafka-a:29093` / `kafka-b:29093` (controller listener, not for clients) |
+| connect-a / connect-b REST | `http://connect-a:8083` / `http://connect-b:8083` |
+| Postgres | `postgres:5432` (JDBC: `jdbc:postgresql://postgres:5432/$POSTGRES_DB`) |
+| Kafka UI | `http://kafka-ui:8080` |
+
+### Connect REST endpoints used by the scripts
+
+The same endpoints exist on both workers (`:8083` = A, `:8084` = B); the connector is `orders-jdbc`.
+
+| Method | Path | Used for |
+| --- | --- | --- |
+| `GET` | `/connectors?expand=status` | `just status` |
+| `PUT` | `/connectors/orders-jdbc/config` | create or update the connector |
+| `GET` | `/connectors/orders-jdbc/status` | connector and task state |
+| `PUT` | `/connectors/orders-jdbc/stop` | stop the tasks and leave the consumer group (needed before changing offsets) |
+| `PUT` | `/connectors/orders-jdbc/resume` | start again after a stop |
+| `GET` | `/connectors/orders-jdbc/offsets` | current sink offsets (KIP-875) |
+| `PATCH` | `/connectors/orders-jdbc/offsets` | set sink offsets (KIP-875), body `{"offsets":[{"partition":{"kafka_topic":"orders","kafka_partition":0},"offset":{"kafka_offset":0}}]}` |
+| `DELETE` | `/connectors/orders-jdbc/offsets` | clear offsets so `auto.offset.reset` applies (not used by the scripts) |
+| `DELETE` | `/connectors/orders-jdbc` | delete the connector (`just reset`) |
+
+### Kafka and database objects
+
+| Object | Where | What |
+| --- | --- | --- |
+| topic `orders` | both clusters | 1 partition, recreated by `just reset` |
+| group `connect-orders-jdbc` | both clusters | the JDBC sink's consumer group |
+| group `connect-orders-sf` | both clusters | the emulator's consumer group |
+| `_connect-configs`, `_connect-offsets`, `_connect-status` | both clusters | each Connect worker's internal topics |
+| `orders_jdbc`, `orders_sf` | Postgres | target tables |
+| `sf_channels` | Postgres | emulated Snowflake channels (`offset_token` per partition) |
+| `sf_update_channel_offset_token(table, channel, token)` | Postgres | stand-in for `SYSTEM$SNOWPIPE_STREAMING_UPDATE_CHANNEL_OFFSET_TOKEN` |
+
+## Credentials
 
 The Postgres credentials come from `.env` (gitignored; `just up` creates it from `.env.example`).
 Connector configs read them through Connect's `EnvVarConfigProvider` (`${env:POSTGRES_PASSWORD}`),
