@@ -23,6 +23,11 @@ down:
 clean:
     {{compose}} down -v --remove-orphans
 
+# `clean` plus the images this project builds (connect, postgres, sf-emulator); pulled images stay
+[confirm("Delete containers, volumes AND this project's built images? [y/N]")]
+nuke:
+    {{compose}} down -v --rmi local --remove-orphans
+
 # Connectors, emulators, consumer groups, topics and tables back to empty (no rebuild)
 reset:
     scripts/reset.sh

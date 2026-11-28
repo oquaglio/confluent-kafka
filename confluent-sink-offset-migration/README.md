@@ -1,4 +1,4 @@
-# confluent-sim-offset-mismatch
+# confluent-sink-offset-migration
 
 Reproduces a sink connector losing its place when it's moved to another Kafka cluster, shows how
 to spot it, and how to recover.
@@ -60,7 +60,7 @@ just up        # build + start everything, create the topics (copies .env.exampl
 just s1        # scenario 1: reset, break, detect, fix; exits 1 if the gap isn't closed
 just s2        # scenario 2: the same
 just all       # both
-just down      # or `just clean` to drop the volumes as well
+just down      # or `just clean` to drop the volumes, `just nuke` to drop the built images too
 ```
 
 Each scenario's steps can also be run one at a time (`just s1-break`, `just s1-detect`, `just s1-fix`,

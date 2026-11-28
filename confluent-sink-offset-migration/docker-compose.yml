@@ -13,8 +13,8 @@
 # scenario scripts (see the justfile) because *when* each one starts is the whole point.
 
 x-kafka-image: &kafka-image confluentinc/cp-kafka:8.1.0
-x-connect-image: &connect-image confluent-sim-offset-mismatch/connect:8.1.0
-x-emulator-image: &emulator-image confluent-sim-offset-mismatch/sf-emulator:0.1.0
+x-connect-image: &connect-image confluent-sink-offset-migration/connect:8.1.0
+x-emulator-image: &emulator-image confluent-sink-offset-migration/sf-emulator:0.1.0
 
 x-kafka-env: &kafka-env
   KAFKA_NODE_ID: 1
@@ -103,7 +103,7 @@ services:
 
   postgres:
     build: postgres
-    image: confluent-sim-offset-mismatch/postgres:17
+    image: confluent-sink-offset-migration/postgres:17
     container_name: postgres
     ports:
       - "5432:5432"
